@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>내 관심사 홈페이지</title>
+    <title>날씨 및 미세먼지 조회</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -21,40 +22,149 @@
         section {
             padding: 20px;
         }
-        iframe {
-            width: 80%;
-            max-width: 800px;
-            height: 450px;
-            border: none;
-        }
-        footer {
-            margin-top: 20px;
+        input {
             padding: 10px;
-            background-color: #333;
+            width: 200px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #007BFF;
             color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #weatherResult {
+            margin-top: 20px;
+            font-size: 18px;
+            color: #333;
+        }
+        canvas {
+            max-width: 600px;
+            margin: 20px auto;
         }
     </style>
 </head>
 <body>
 
     <header>
-        내 관심사: [여기에 관심사 입력]
+        🌤 지역별 날씨 및 미세먼지 조회
     </header>
 
     <section>
-        <h2>내가 좋아하는 유튜브 영상</h2>
-        <p>이 영상은 내가 관심 있는 주제에 대한 내용을 담고 있습니다.</p>
+        <h2>날씨를 확인할 지역을 입력하세요</h2>
+        <input type="text" id="cityInput" placeholder="예: 서울">
+        <button onclick="getWeather()">날씨 확인</button>
         
-        <!-- 요청하신 유튜브 영상 -->
-        <iframe 
-            src="https://www.youtube.com/embed/TB0pwAI8rLY" 
-            allowfullscreen>
-        </iframe>
+        <div id="weatherResult"></div>
+        <canvas id="weatherChart"></canvas>
     </section>
 
-    <footer>
-        &copy; 2025 내 관심사 홈페이지
-    </footer>
+    <script>
+        let weatherChart = null; // 그래프 객체를 전역 변수로 선언
+
+        async function getWeather() {
+            const apiKey = "24109ddecb29a5405afe2a8df42c5e34"; // API 키
+            const city = document.getElementById("cityInput").value;
+            const weatherResult = document.getElementById("weatherResult");
+
+            if (!city) {
+                weatherResult.innerHTML = "<p style='color:red;'>⚠ 지역명을 입력하세요.</p>";
+                return;
+            }
+
+            // 날씨 API 요청
+            const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${apiKey}&units=metric&lang=kr`;
+            console.log("날씨 API 요청 URL:", weatherUrl);
+
+            try {
+                const weatherResponse = await fetch(weatherUrl);
+                const weatherData = await weatherResponse.json();
+                console.log("날씨 API 응답:", weatherData);
+
+                if (weatherData.cod === 200) {
+                    const temp = weatherData.main.temp;
+                    const humidity = weatherData.main.humidity;
+                    const windSpeed = weatherData.wind.speed;
+                    const icon = weatherData.weather[0].icon;
+                    const lat = weatherData.coord.lat;
+                    const lon = weatherData.coord.lon;
+
+                    // 미세먼지 API 요청
+                    const airPollutionUrl = `https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${apiKey}`;
+                    console.log("미세먼지 API 요청 URL:", airPollutionUrl);
+
+                    const airResponse = await fetch(airPollutionUrl);
+                    const airData = await airResponse.json();
+                    console.log("미세먼지 API 응답:", airData);
+
+                    if (!airData.list || airData.list.length === 0) {
+                        throw new Error("미세먼지 데이터를 찾을 수 없습니다.");
+                    }
+
+                    const pm2_5 = airData.list[0].components.pm2_5; // 미세먼지 (PM2.5) 값
+                    const pmLevel = getPMLevel(pm2_5); // 미세먼지 1~5단계 변환
+
+                    weatherResult.innerHTML = `
+                        <h3>📍 ${city}의 날씨</h3>
+                        <img src="https://openweathermap.org/img/wn/${icon}@2x.png" alt="날씨 아이콘">
+                        <p>🌡 온도: ${temp}°C</p>
+                        <p>💧 습도: ${humidity}%</p>
+                        <p>💨 풍속: ${windSpeed} m/s</p>
+                        <p>🌫 미세먼지 (PM2.5): ${pm2_5} µg/m³ (등급: ${pmLevel}/5)</p>
+                    `;
+
+                    drawChart(temp, humidity, windSpeed, pmLevel);
+                } else {
+                    throw new Error(`날씨 데이터 오류: ${weatherData.message}`);
+                }
+            } catch (error) {
+                console.error("오류 발생:", error);
+                weatherResult.innerHTML = `<p style='color:red;'>⚠ 오류 발생: ${error.message}</p>`;
+            }
+        }
+
+        // 미세먼지 1~5등급 변환 함수
+        function getPMLevel(pm2_5) {
+            if (pm2_5 <= 15) return 1;  // 좋음
+            if (pm2_5 <= 35) return 2;  // 보통
+            if (pm2_5 <= 75) return 3;  // 나쁨
+            if (pm2_5 <= 150) return 4; // 매우 나쁨
+            return 5;                   // 최악
+        }
+
+        // 그래프 생성 함수
+        function drawChart(temp, humidity, windSpeed, pmLevel) {
+            const ctx = document.getElementById("weatherChart").getContext("2d");
+
+            // 기존 그래프 삭제
+            if (weatherChart !== null) {
+                weatherChart.destroy();
+            }
+
+            // 새로운 그래프 생성
+            weatherChart = new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: ["온도 (°C)", "습도 (%)", "풍속 (m/s)", "미세먼지 (등급)"],
+                    datasets: [{
+                        label: "날씨 데이터",
+                        data: [temp, humidity, windSpeed, pmLevel],
+                        backgroundColor: ["red", "blue", "green", "purple"]
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+    </script>
 
 </body>
 </html>
